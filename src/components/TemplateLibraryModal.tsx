@@ -1,0 +1,259 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { BookOpen, Clock3, FileText, Loader2, Search, ShieldCheck, X } from 'lucide-react';
+import { toast } from 'sonner';
+import {
+  getRecentTemplateRefs,
+  getTemplateInsertText,
+  listAllTemplates,
+  recordRecentTemplate,
+  type StoryTemplate,
+  type TemplateCategory,
+} from '../lib/templateLibrary';
+
+interface TemplateLibraryModalProps {
+  open: boolean;
+  onClose: () => void;
+  onInsert: (content: string, title: string, category: TemplateCategory) => void;
+}
+
+const TABS: Array<{ id: TemplateCategory; label: string; icon: React.ReactNode; description: string }> = [
+  {
+    id: 'customer',
+    label: 'Customer Pay',
+    icon: <FileText size={16} />,
+    description: 'Insert exact saved text — no AI rewrite',
+  },
+  {
+    id: 'warranty',
+    label: 'Warranty Claims',
+    icon: <ShieldCheck size={16} />,
+    description: 'Pre-approved warranty story templates',
+  },
+];
+
+export function TemplateLibraryModal({ open, onClose, onInsert }: TemplateLibraryModalProps) {
+  const [activeTab, setActiveTab] = useState<TemplateCategory>('warranty');
+  const [templates, setTemplates] = useState<StoryTemplate[]>([]);
+  const [search, setSearch] = useState('');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [recentRefs, setRecentRefs] = useState(getRecentTemplateRefs());
+
+  const loadTemplates = useCallback(() => {
+    const rows = listAllTemplates();
+    setTemplates(rows);
+    setRecentRefs(getRecentTemplateRefs());
+    setSelectedId((current) => {
+      if (current && rows.some((t) => t.id === current)) return current;
+      const first = rows.find((t) => t.category === activeTab) || rows[0];
+      return first?.id ?? null;
+    });
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (!open) {
+      setSearch('');
+      setActiveTab('warranty');
+      return;
+    }
+    loadTemplates();
+  }, [open, loadTemplates]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [open, onClose]);
+
+  const filtered = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return templates
+      .filter((t) => t.category === activeTab)
+      .filter((t) => !term || t.title.toLowerCase().includes(term) || t.content.toLowerCase().includes(term));
+  }, [templates, activeTab, search]);
+
+  const recentTemplates = useMemo(() => {
+    const byId = new Map(templates.map((t) => [t.id, t]));
+    return recentRefs
+      .map((ref) => byId.get(ref.id))
+      .filter((t): t is StoryTemplate => !!t && t.category === activeTab)
+      .slice(0, 6);
+  }, [recentRefs, templates, activeTab]);
+
+  useEffect(() => {
+    if (filtered.length === 0) {
+      setSelectedId(null);
+      return;
+    }
+    if (!selectedId || !filtered.some((t) => t.id === selectedId)) {
+      setSelectedId(filtered[0].id);
+    }
+  }, [filtered, selectedId]);
+
+  const selected = filtered.find((t) => t.id === selectedId) ?? null;
+
+  const tabCounts = useMemo(
+    () => ({
+      customer: templates.filter((t) => t.category === 'customer').length,
+      warranty: templates.filter((t) => t.category === 'warranty').length,
+    }),
+    [templates]
+  );
+
+  const handleInsert = (template: StoryTemplate) => {
+    const exactText = getTemplateInsertText(template);
+    recordRecentTemplate({ id: template.id, title: template.title, category: template.category });
+    setRecentRefs(getRecentTemplateRefs());
+    onInsert(exactText, template.title, template.category);
+    if (template.category === 'customer') {
+      toast.success(`Inserted "${template.title}" — exact saved text, no AI rewrite`);
+    } else {
+      toast.success(`Inserted "${template.title}" into story`);
+    }
+    onClose();
+  };
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[110] bg-black/75 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="ios-card w-full sm:max-w-3xl max-h-[92dvh] flex flex-col rounded-t-2xl sm:rounded-2xl overflow-hidden border border-[#38383a]">
+        <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-3 border-b border-[#38383a]">
+          <div>
+            <div className="flex items-center gap-2 text-[#0a84ff] mb-1">
+              <BookOpen size={18} />
+              <span className="text-xs uppercase tracking-[0.2em] font-semibold">Template Library</span>
+            </div>
+            <h2 className="text-lg font-semibold">Mercedes-Benz Story Templates</h2>
+            <p className="text-xs text-[#8e8e93] mt-1">Customer Pay inserts exact saved text — never sent through Grok</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-2 rounded-xl border border-[#38383a] text-[#8e8e93] hover:text-white"
+            aria-label="Close template library"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="px-5 pt-3 pb-2 flex gap-2">
+          {TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex-1 rounded-xl px-3 py-2.5 text-left transition-colors ${
+                activeTab === tab.id
+                  ? 'bg-[#0a84ff]/15 border border-[#0a84ff]/40 text-white'
+                  : 'bg-[#1c1c1e] border border-[#38383a] text-[#8e8e93]'
+              }`}
+            >
+              <div className="flex items-center gap-2 text-sm font-medium">
+                {tab.icon}
+                {tab.label}
+                <span className="ml-auto text-[10px] opacity-80">{tabCounts[tab.id]}</span>
+              </div>
+              <div className="text-[10px] mt-0.5 opacity-80">{tab.description}</div>
+            </button>
+          ))}
+        </div>
+
+        {recentTemplates.length > 0 && (
+          <div className="px-5 pb-3">
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-[#8e8e93] mb-2">
+              <Clock3 size={14} />
+              Recently Used
+            </div>
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {recentTemplates.map((template) => (
+                <button
+                  key={`recent-${template.id}`}
+                  type="button"
+                  onClick={() => setSelectedId(template.id)}
+                  className={`shrink-0 rounded-xl px-3 py-2 text-left border transition-colors ${
+                    selected?.id === template.id
+                      ? 'bg-[#0a84ff]/15 border-[#0a84ff]/40'
+                      : 'bg-[#1c1c1e] border-[#38383a] hover:bg-[#252528]'
+                  }`}
+                >
+                  <div className="text-xs font-medium max-w-[160px] truncate">{template.title}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="px-5 pb-3">
+          <div className="relative">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#8e8e93]" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={`Search ${activeTab === 'customer' ? 'customer pay' : 'warranty'} templates...`}
+              className="w-full bg-[#1c1c1e] border border-[#38383a] rounded-xl pl-9 pr-3 py-2.5 text-sm placeholder-[#8e8e93]"
+            />
+          </div>
+        </div>
+
+        <div className="flex-1 min-h-0 grid grid-cols-1 sm:grid-cols-[220px_1fr] border-t border-[#38383a]">
+          <div className="sm:border-r border-[#38383a] overflow-y-auto max-h-[28dvh] sm:max-h-none">
+            {filtered.length === 0 ? (
+              <div className="p-4 text-sm text-[#8e8e93]">No templates match your search.</div>
+            ) : (
+              filtered.map((template) => (
+                <button
+                  key={template.id}
+                  type="button"
+                  onClick={() => setSelectedId(template.id)}
+                  className={`w-full text-left px-4 py-3 border-b border-[#2c2c2e] transition-colors ${
+                    selected?.id === template.id ? 'bg-[#0a84ff]/10 text-white' : 'hover:bg-[#252528] text-[#c7c7cc]'
+                  }`}
+                >
+                  <div className="text-sm font-medium leading-snug">{template.title}</div>
+                </button>
+              ))
+            )}
+          </div>
+
+          <div className="flex flex-col min-h-0">
+            {selected ? (
+              <>
+                <div className="px-4 py-3 border-b border-[#38383a]">
+                  <div className="text-sm font-semibold">{selected.title}</div>
+                  <div className="text-[10px] text-[#8e8e93] mt-0.5">
+                    {selected.category === 'customer' ? 'Customer Pay — exact text insert' : 'Warranty Claim Template'}
+                  </div>
+                </div>
+                <div className="flex-1 overflow-y-auto px-4 py-3">
+                  <pre className="text-xs text-[#c7c7cc] whitespace-pre-wrap leading-relaxed font-sans">{selected.content}</pre>
+                </div>
+                <div className="px-4 py-3 border-t border-[#38383a]">
+                  <button
+                    type="button"
+                    onClick={() => handleInsert(selected)}
+                    className="primary-btn w-full h-12 text-sm flex items-center justify-center gap-2"
+                  >
+                    {selected.category === 'customer' ? (
+                      <>Insert Exact Text (No AI)</>
+                    ) : (
+                      <>Insert Template</>
+                    )}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="p-4 text-sm text-[#8e8e93] flex items-center gap-2">
+                <Loader2 size={16} className="animate-spin text-[#0a84ff]" />
+                Select a template
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
